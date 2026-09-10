@@ -1,0 +1,104 @@
+/* Simple Browser Game — layout for canvas, HUD, and game-over overlay.
+   No framework, no build step. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #14161c;
+  color: #f2f4f8;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+/* The container establishes a positioning context so the HUD and overlay
+   can be layered on top of the canvas. */
+#game-container {
+  position: relative;
+  width: 800px;
+  height: 600px;
+  max-width: 100vw;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+#game-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #1e2230;
+  border: 1px solid #2c3145;
+}
+
+/* HUD overlaid at the top of the field. */
+#hud {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 14px;
+  font-size: 18px;
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+#hud-score {
+  color: #ffe066;
+}
+
+#hud-health {
+  color: #ff7b7b;
+}
+
+/* Game-over overlay covers the whole field with a dim backdrop. */
+#game-over-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 18, 0.78);
+}
+
+#game-over-overlay.hidden {
+  display: none;
+}
+
+#game-over-panel {
+  text-align: center;
+  padding: 32px 48px;
+  background: rgba(30, 34, 48, 0.9);
+  border: 1px solid #3a4159;
+  border-radius: 12px;
+}
+
+#game-over-title {
+  margin: 0 0 12px;
+  font-size: 40px;
+  color: #ff5b5b;
+}
+
+#game-over-score {
+  margin: 0 0 8px;
+  font-size: 24px;
+  color: #ffe066;
+}
+
+#game-over-restart {
+  margin: 0;
+  font-size: 16px;
+  color: #9aa2b5;
+}

@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Survivor — Simple Browser Game</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="game-container">
+      <!-- The playfield. Width/height are the canvas coordinate space. -->
+      <canvas id="game-canvas" width="800" height="600"></canvas>
+
+      <!-- Heads-up display: current score and player health, drawn over the canvas. -->
+      <div id="hud">
+        <span id="hud-score">Score: 0</span>
+        <span id="hud-health">HP: 100</span>
+      </div>
+
+      <!-- Game-over overlay. Hidden during play; shown when the player dies.
+           The final score and restart prompt are populated by render.js. -->
+      <div id="game-over-overlay" class="hidden">
+        <div id="game-over-panel">
+          <h1 id="game-over-title">Game Over</h1>
+          <p id="game-over-score">Final Score: 0</p>
+          <p id="game-over-restart">Press any key to restart</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Entry point. type="module" enables ES6 imports with no build step. -->
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>
