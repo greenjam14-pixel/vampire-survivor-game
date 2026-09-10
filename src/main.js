@@ -12,6 +12,7 @@ import { update } from './update.js';
 import { render } from './render.js';
 import { getInputSnapshot } from './input.js';
 import { applyUpgrade } from './upgrades.js';
+import { tryPlaceTurret } from './turrets.js';
 
 // Clamp a single simulation step to at most 50 ms. If the tab is hidden or a
 // debugger pauses execution, the next timestamp gap could be several seconds,
@@ -20,6 +21,40 @@ const MAX_DT = 0.05;
 
 // The id of the <canvas> element declared in index.html.
 const CANVAS_ID = 'game-canvas';
+
+/**
+ * Convert a browser mouse event to canvas (game) coordinates.
+ *
+ * A `click` event reports the pointer position in the browser page
+ * (`event.clientX` / `event.clientY`, measured from the top-left of the visible
+ * window), but the game thinks in canvas coordinates (0..width across, 0..height
+ * down, measured from the canvas's top-left). Two corrections are applied:
+ *
+ *   1. Page offset — `canvas.getBoundingClientRect()` gives the canvas's
+ *      top-left corner (`rect.left`, `rect.top`) in the same page coordinates
+ *      as `clientX/clientY`; subtracting makes the position relative to the
+ *      canvas.
+ *   2. CSS scale — the canvas backing buffer (`canvas.width`/`canvas.height`)
+ *      may differ from its displayed size (`rect.width`/`rect.height`) if CSS
+ *      stretches or shrinks it; multiplying by `canvas.width / rect.width` (and
+ *      likewise for height) rescales displayed pixels back to buffer pixels.
+ *
+ * When the canvas is displayed at its native size, both scale factors are 1 and
+ * this simply subtracts the offset.
+ *
+ * @param {HTMLCanvasElement} canvas The game canvas.
+ * @param {MouseEvent} event The click event.
+ * @returns {{x:number, y:number}} The click position in canvas/game coordinates.
+ */
+function toCanvasCoords(canvas, event) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width; // buffer px per displayed px (x)
+  const scaleY = canvas.height / rect.height; // buffer px per displayed px (y)
+  return {
+    x: (event.clientX - rect.left) * scaleX,
+    y: (event.clientY - rect.top) * scaleY,
+  };
+}
 
 /**
  * Boot the game: acquire the canvas and its 2D context, create the initial
@@ -133,6 +168,16 @@ function main() {
 
   // Attach the upgrade-button click handlers once, at boot.
   wireUpgradeButtons();
+
+  // Turret placement: a click on the <canvas> itself (distinct from the
+  // upgrade-button DOM clicks above). Convert the mouse position to game
+  // coordinates and hand it to the pure tryPlaceTurret, which checks
+  // phase === 'PLAYING', the placement radius, and affordability internally and
+  // returns the same state on failure — so no extra guards are needed here.
+  canvas.addEventListener('click', (event) => {
+    const { x, y } = toCanvasCoords(canvas, event);
+    gameState = tryPlaceTurret(gameState, x, y);
+  });
 
   // Kick off the loop.
   requestAnimationFrame(frame);

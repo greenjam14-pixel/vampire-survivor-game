@@ -67,6 +67,10 @@ body {
   color: #ff7b7b;
 }
 
+#hud-scrap {
+  color: #ff9c33;
+}
+
 /* Game-over overlay covers the whole field with a dim backdrop. */
 #game-over-overlay {
   position: absolute;

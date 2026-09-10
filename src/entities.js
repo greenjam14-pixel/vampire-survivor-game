@@ -7,6 +7,22 @@
 // Projectile travel speed in pixels per second. Fast enough to reach enemies reliably.
 const PROJECTILE_SPEED = 400;
 
+// --- Deployable Turrets feature: tunable constants ---
+// All feature numbers live in one place as named constants so they can be adjusted easily.
+
+// Probability (0.0–1.0) that a projectile-killed enemy drops one Scrap Pickup.
+export const SCRAP_DROP_CHANCE = 0.25; // Req 1.5
+// Starting (and maximum) health for a turret — a whole number > 0.
+export const TURRET_MAX_HEALTH = 30; // Req 7.2
+// How far a turret can see/shoot an enemy, in pixels.
+export const TURRET_RANGE = 180; // Req 5.7
+// Seconds between one turret's shots.
+export const TURRET_FIRE_INTERVAL = 0.8; // Req 5.7
+// Scrap spent to place one turret.
+export const TURRET_COST = 3; // Req 6.6
+// How far from the player a click may place a turret, in pixels.
+export const PLACEMENT_RADIUS = 150; // Req 6.6
+
 /**
  * Create the player entity, centered in the field.
  *
@@ -24,6 +40,7 @@ export function createPlayer(fieldWidth, fieldHeight) {
     level: 1, // starting level (Req 3.1)
     xp: 0, // current XP toward next level (Req 3.1)
     fireInterval: 0.5, // seconds between shots; was FIRE_INTERVAL const, now per-player and upgradeable (Req 6.1)
+    scrap: 0, // Scrap Count — a whole number, starts at 0 (Req 4.1)
   };
 }
 
@@ -82,6 +99,38 @@ export function createGem(x, y) {
 }
 
 /**
+ * Create a Scrap Pickup at a killed enemy's death position.
+ * A second pickup resource, collected by walking over it (like gems).
+ *
+ * @param {number} x Center x in pixels (the killed enemy's position).
+ * @param {number} y Center y in pixels (the killed enemy's position).
+ * @returns {{x:number, y:number, radius:number}}
+ */
+export function createScrap(x, y) {
+  return { x, y, radius: 5 }; // radius 5 for circle-overlap pickup (Req 1.2, 3.1)
+}
+
+/**
+ * Create a Turret at a placement position. Each turret owns its own fire timer
+ * and its own health. A fresh turret starts at full health (health === maxHealth) —
+ * it is a destructible structure.
+ *
+ * @param {number} x Center x in pixels.
+ * @param {number} y Center y in pixels.
+ * @returns {{x:number, y:number, radius:number, fireTimer:number, health:number, maxHealth:number}}
+ */
+export function createTurret(x, y) {
+  return {
+    x,
+    y,
+    radius: 12, // visual radius 12
+    fireTimer: 0, // own fire timer starts at 0 (Req 5.1)
+    health: TURRET_MAX_HEALTH, // current health, starts full (Req 7.1)
+    maxHealth: TURRET_MAX_HEALTH, // starting/maximum health (Req 7.1, 7.2)
+  };
+}
+
+/**
  * Create the initial game state — the single source of truth for the simulation.
  *
  * @param {number} fieldWidth  Width of the game field in pixels.
@@ -102,5 +151,7 @@ export function createInitialState(fieldWidth, fieldHeight) {
     spawnTimer: 0, // for enemy spawning (Req 3.1)
     survivalTime: 0, // total seconds survived (Req 5.2/5.3)
     score: 0, // floor(survivalTime), frozen at game over (Req 5.1)
+    scrapPickups: [], // uncollected Scrap Pickups on the field (Req 2.1)
+    turrets: [], // placed turrets (Req 10.2)
   };
 }

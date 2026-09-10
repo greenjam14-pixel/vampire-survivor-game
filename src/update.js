@@ -5,13 +5,14 @@
 // Task 7 wires the full update() pipeline: gem drops on projectile kills, gem
 // collection + XP gain, leveling, and the PLAYING/GAME_OVER/LEVEL_UP phase.
 
-import { createProjectile, createGem } from './entities.js';
+import { createProjectile, createGem, createScrap, SCRAP_DROP_CHANCE } from './entities.js';
 import { enemyHitsPlayer, resolveProjectileEnemyCollisions, circlesOverlap } from './collision.js';
 import { computeVelocity } from './input.js';
 import { updateSpawner, moveEnemyTowardPlayer } from './spawner.js';
 import { updateScore } from './scoring.js';
 import { applyLeveling } from './leveling.js';
 import { offerUpgrades } from './upgrades.js';
+import { updateTurrets } from './turrets.js';
 
 /**
  * Clamp a position so the entity's circle stays fully inside the field.
@@ -255,6 +256,70 @@ export function resolveGemCollection(player, gems) {
 
 
 /**
+ * Decide which projectile-killed enemies drop Scrap.
+ *
+ * Draws exactly one rng value per killed enemy and creates one Scrap Pickup at
+ * that enemy's death position when the draw is strictly below SCRAP_DROP_CHANCE.
+ * Pure: given the same `killed` list and the same `rng`, it always returns the
+ * same pickups (Req 1.1, 1.2, 1.3). Only projectile kills appear in `killed`;
+ * contact kills are resolved elsewhere and never roll for scrap (Req 1.6), and
+ * because player and turret kills share the same `killed` list they are treated
+ * identically here (Req 1.4).
+ *
+ * @param {Array<{x:number, y:number}>} killed Enemies removed by projectiles this step.
+ * @param {() => number} rng A function returning a value in [0, 1).
+ * @returns {Array<{x:number, y:number, radius:number}>} New Scrap Pickups.
+ */
+export function rollScrapDrops(killed, rng) {
+  const drops = [];
+  for (const enemy of killed) {
+    // One independent draw per killed enemy; a strict "<" gives a 25% chance
+    // because rng() is uniform in [0, 1) (Req 1.1, 1.3). At most one pickup per
+    // enemy, created at its death position (Req 1.2).
+    if (rng() < SCRAP_DROP_CHANCE) {
+      drops.push(createScrap(enemy.x, enemy.y));
+    }
+  }
+  return drops;
+}
+
+
+/**
+ * Collect every Scrap Pickup the player is touching, in a single pass.
+ *
+ * A pickup is collected when the player's circle overlaps it (circlesOverlap,
+ * Req 3.1). Overlapping pickups are removed and counted (one each); the rest are
+ * kept unchanged at their positions (Req 2.1, 3.3, 3.5). Because it is a single
+ * partition pass, the result does not depend on processing order (Req 3.4).
+ * Scrap and gem collection touch different arrays via different resolvers, so
+ * collecting one never affects the other (Req 2.2).
+ *
+ * Pure: returns a new array and a count without mutating inputs.
+ *
+ * @param {{x:number, y:number, radius:number}} player The player entity.
+ * @param {Array<{x:number, y:number, radius:number}>} scraps The scrapPickups list.
+ * @returns {{scraps:Array, scrapGained:number}} Remaining pickups and count collected.
+ */
+export function resolveScrapCollection(player, scraps) {
+  const remaining = [];
+  let scrapGained = 0;
+
+  for (const pickup of scraps) {
+    // "Touching counts as overlap": collect when the player's circle overlaps
+    // the pickup's circle (Req 3.1). Each collected pickup is worth exactly one
+    // (Req 3.2); untouched pickups stay put unchanged (Req 2.1, 3.5).
+    if (circlesOverlap(player, pickup)) {
+      scrapGained += 1;
+    } else {
+      remaining.push(pickup);
+    }
+  }
+
+  return { scraps: remaining, scrapGained };
+}
+
+
+/**
  * Advance the simulation one step and return the next GameState.
  *
  * This is the pure heart of the game: it takes the current state, the elapsed
@@ -277,26 +342,43 @@ export function resolveGemCollection(player, gems) {
  *   3. Spawn new enemies on the spawn timer (Req 3.1, 3.2).
  *   4. Advance the fire timer (per-player interval) and emit projectiles at the
  *      nearest enemy (Req 2.1–2.4, 6.2).
- *   5. Move projectiles and cull any that leave the field (Req 2.6).
+ *   4b. Advance every turret's own fire timer and emit turret projectiles at the
+ *      nearest in-range enemy, then merge them with the player projectiles into a
+ *      single list BEFORE movement/collision so turret shots move and collide
+ *      identically and their kills land in the same `killed` array (Req 5.3).
+ *   5. Move the combined projectile list and cull any that leave the field (Req 2.6).
  *   6. Resolve projectile↔enemy hits, learning which enemies died (Req 2.5), and
  *      drop one XP gem at each projectile-killed enemy's position (Req 1.1, 1.2).
+ *   6b. Roll an rng-driven scrap drop per projectile-killed enemy (25% each) and
+ *      add both the dropped gems and dropped scrap to the on-field lists
+ *      (Req 1.1, 1.4, 1.7).
  *   7. Resolve enemy↔player hits, apply damage, and check game over
  *      (Req 3.4, 4.2, 4.3, 4.4).
  *   7b. Collect gems the player is touching and add their XP to the player
  *      (Req 2.1–2.5), then run leveling on the new XP total (Req 3.4–3.6, 3.8).
+ *      Then collect the scrap the player is touching and fold the count into the
+ *      player's scrap total (Req 3.2, 4.2).
  *   7c. Choose the resulting phase — GAME_OVER takes priority over LEVEL_UP; a
  *      level-up enters LEVEL_UP and offers 3 upgrades, otherwise PLAYING
  *      (Req 4.1, 5.1). Because LEVEL_UP is set at the end of the step, the next
  *      frame hits the early-return and freezes until an upgrade is chosen.
  *   8. Update the survival-time score (Req 5.1–5.3).
  *
+ * Because turret firing and scrap drop/collection all run inside the PLAYING
+ * branch, the 'LEVEL_UP'/'GAME_OVER' early-return freezes them too — no turret
+ * timer advances, no turret projectile is created, and no scrap is dropped or
+ * collected while frozen (Req 9.1, 9.2, 12.3).
+ *
  * @param {object} state The current GameState.
  * @param {number} dt    Elapsed time in seconds since the previous update.
  * @param {{up:boolean, down:boolean, left:boolean, right:boolean}} input
  *        Directional input snapshot.
+ * @param {() => number} [rng=Math.random] Random source used only for the
+ *        per-kill scrap-drop rolls (Req 1.1). Defaults to Math.random so all
+ *        existing callers keep working; tests inject a controlled rng.
  * @returns {object} The next GameState (new object; inputs are not mutated).
  */
-export function update(state, dt, input) {
+export function update(state, dt, input, rng = Math.random) {
   // GAME_OVER or LEVEL_UP (any non-PLAYING phase): freeze the entire simulation
   // and return the state unchanged. This also freezes LEVEL_UP with no extra
   // pause code (Req 1.5, 1.8, 3.5, 4.2–4.6, 4.8, 5.5).
@@ -338,8 +420,18 @@ export function update(state, dt, input) {
     dt
   );
 
-  // 5. Move projectiles and cull any that leave the field (Req 2.6).
-  const movedProjectiles = updateProjectiles(firedProjectiles, field, dt);
+  // 4b. Advance every turret's own fire timer and emit turret projectiles at the
+  //     nearest in-range enemy (Req 5.1–5.5). This also applies the destruction
+  //     framework (turrets with health <= 0 are dropped). Merge the turret shots
+  //     with the player shots BEFORE movement/collision so both kinds move and
+  //     collide identically and turret kills land in the same `killed` array
+  //     (Req 5.3, 1.4).
+  const { turrets: updatedTurrets, projectiles: turretProjectiles } =
+    updateTurrets(state.turrets, spawnedEnemies, dt);
+  const allProjectiles = [...firedProjectiles, ...turretProjectiles];
+
+  // 5. Move the combined projectile list and cull any that leave the field (Req 2.6).
+  const movedProjectiles = updateProjectiles(allProjectiles, field, dt);
 
   // 6. Resolve projectile↔enemy collisions: both are removed on a hit,
   //    at most one enemy per projectile (Req 2.5). Also learn which enemies died
@@ -355,6 +447,12 @@ export function update(state, dt, input) {
   //     are handled in step 7 and drop no gems (Req 1.4).
   const droppedGems = killed.map((e) => createGem(e.x, e.y));
   const gemsOnField = [...state.gems, ...droppedGems];
+
+  // 6b'. Roll a scrap drop per projectile-killed enemy (25% each, one rng draw
+  //      per enemy) and add them to the scrap already on the field (Req 1.1, 1.4).
+  //      Contact kills are handled in step 7 and never roll for scrap.
+  const droppedScrap = rollScrapDrops(killed, rng);
+  const scrapOnField = [...state.scrapPickups, ...droppedScrap];
 
   // 7. Resolve enemy↔player collisions: apply damage (clamped at 0), remove the
   //    colliding enemies, and detect game over (Req 3.4, 4.2, 4.3, 4.4).
@@ -377,6 +475,19 @@ export function update(state, dt, input) {
   const { level, xp, leveledUp } = applyLeveling(playerWithXp);
   const leveledPlayer = { ...playerWithXp, level, xp };
 
+  // 7b'. Collect the scrap the player is touching (mirrors gem collection) and
+  //      fold the count into the player's scrap total exactly once (Req 3.2, 4.2).
+  //      leveledPlayer already carries scrap from playerAfterDamage (via
+  //      playerWithXp), so we only add scrapGained here.
+  const { scraps: remainingScrap, scrapGained } = resolveScrapCollection(
+    playerAfterDamage,
+    scrapOnField
+  );
+  const scrappedPlayer = {
+    ...leveledPlayer,
+    scrap: leveledPlayer.scrap + scrapGained,
+  };
+
   // 7c. Choose the resulting phase. Game-over takes priority over level-up: if
   //     the player died this step we stay GAME_OVER; otherwise a level-up enters
   //     LEVEL_UP and offers 3 upgrades, else we remain PLAYING (Req 4.1, 5.1).
@@ -390,10 +501,12 @@ export function update(state, dt, input) {
   return {
     phase: finalPhase,
     field,
-    player: leveledPlayer,
+    player: scrappedPlayer,
     enemies: survivingEnemies,
     projectiles: survivingProjectiles,
     gems: remainingGems,
+    scrapPickups: remainingScrap,
+    turrets: updatedTurrets,
     pendingUpgrades,
     fireTimer,
     spawnTimer,
