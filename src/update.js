@@ -2,16 +2,16 @@
 //
 // Task 2.5 implements the pure per-axis boundary-clamping helper below.
 // Task 6.1 adds the automatic-firing helpers (findNearestEnemy, updateFiring).
-// The full update() pipeline is added in task 8.x.
+// Task 7 wires the full update() pipeline: gem drops on projectile kills, gem
+// collection + XP gain, leveling, and the PLAYING/GAME_OVER/LEVEL_UP phase.
 
-import { createProjectile } from './entities.js';
-import { enemyHitsPlayer, resolveProjectileEnemyCollisions } from './collision.js';
+import { createProjectile, createGem } from './entities.js';
+import { enemyHitsPlayer, resolveProjectileEnemyCollisions, circlesOverlap } from './collision.js';
 import { computeVelocity } from './input.js';
 import { updateSpawner, moveEnemyTowardPlayer } from './spawner.js';
 import { updateScore } from './scoring.js';
-
-// Automatic-attack cadence: fire one projectile every 0.5 s (Req 2.1).
-const FIRE_INTERVAL = 0.5;
+import { applyLeveling } from './leveling.js';
+import { offerUpgrades } from './upgrades.js';
 
 /**
  * Clamp a position so the entity's circle stays fully inside the field.
@@ -65,12 +65,14 @@ export function findNearestEnemy(player, enemies) {
 /**
  * Advance the automatic-fire timer and emit projectiles.
  *
- * The fire timer accumulates delta time and fires once per full FIRE_INTERVAL
- * (0.5 s), carrying the remainder forward so timing stays frame-rate
- * independent (Req 2.1). Each fired projectile is aimed as a unit vector at the
- * nearest living enemy (Req 2.2, 2.3). When no living enemy exists at a fire
- * interval, that firing is skipped while the accumulated timer is preserved, so
- * the next interval with a target fires normally (Req 2.4).
+ * The fire timer accumulates delta time and fires once per full fire interval,
+ * carrying the remainder forward so timing stays frame-rate independent
+ * (Req 2.1). The interval is read from the player (`player.fireInterval`) so an
+ * upgrade can make the player fire faster (Req 6.2); it replaces the old
+ * module-level FIRE_INTERVAL constant. Each fired projectile is aimed as a unit
+ * vector at the nearest living enemy (Req 2.2, 2.3). When no living enemy exists
+ * at a fire interval, that firing is skipped while the accumulated timer is
+ * preserved, so the next interval with a target fires normally (Req 2.4).
  *
  * This helper is pure: it returns the projectiles to add and the carried-forward
  * timer without mutating the input state. Wiring into update() happens in task 8.6.
@@ -82,11 +84,12 @@ export function findNearestEnemy(player, enemies) {
  */
 export function updateFiring(state, dt) {
   const { player, enemies, projectiles } = state;
+  const interval = state.player.fireInterval; // per-player, upgradeable (Req 6.2)
   let timer = state.fireTimer + dt;
   const newProjectiles = [];
 
-  while (timer >= FIRE_INTERVAL) {
-    timer -= FIRE_INTERVAL; // consume one interval, carrying the remainder forward
+  while (timer >= interval) {
+    timer -= interval; // consume one interval, carrying the remainder forward
     const target = findNearestEnemy(player, enemies);
     if (target === null) {
       // No living enemy: skip firing but keep the elapsed timing (Req 2.4).
@@ -203,6 +206,53 @@ export function resolveEnemyPlayerCollisions(player, enemies) {
 }
 
 
+/**
+ * Resolve XP_Gem collection by the player in a single pass.
+ *
+ * Every gem whose circle overlaps the player's circle is collected this step:
+ * "touching counts as overlap", so a gem is collected when the distance between
+ * centers is at most the sum of the two radii (`circlesOverlap`, Req 2.1). The
+ * gems are partitioned in one pass into collected and remaining: each collected
+ * gem's `xpValue` is summed into `xpGained`, while non-overlapping gems are kept
+ * in `remaining` at their current position, unchanged (Req 2.5).
+ *
+ * Because the partition is a single pass over the list, the result does not
+ * depend on the order the gems are processed (Req 2.4), and every gem is tested
+ * — and therefore collected — at most once, so no gem is collected twice in this
+ * or a later step (Req 2.3). The accumulated `xpGained` is a sum of the
+ * collected gems' XP values, forming a non-decreasing contribution to the
+ * player's running XP total (Req 2.2). A gem uses a Gem_XP_Value of 1 when it
+ * carries no explicit `xpValue` (Req 1.3 default).
+ *
+ * This helper is pure: it returns a new gem list and the gained XP without
+ * mutating the player, the gem list, or any gem object. Wiring into update()
+ * happens in task 7.
+ *
+ * @param {{x:number, y:number, radius:number}} player The player entity.
+ * @param {Array<{x:number, y:number, radius:number, xpValue?:number}>} gems
+ *        The current XP_Gem list.
+ * @returns {{gems:Array, xpGained:number}} The gems still on the field and the
+ *          total XP gained from the collected gems this step.
+ */
+export function resolveGemCollection(player, gems) {
+  const remaining = [];
+  let xpGained = 0;
+
+  for (const gem of gems) {
+    // "Touching counts as overlap": collect when the player's circle overlaps
+    // the gem's circle (Req 2.1). Non-overlapping gems are kept as-is (Req 2.5).
+    if (circlesOverlap(player, gem)) {
+      // Sum this gem's XP value into the running total (Req 2.2). A gem with no
+      // explicit xpValue is worth the default Gem_XP_Value of 1 (Req 1.3).
+      xpGained += gem.xpValue ?? 1;
+    } else {
+      remaining.push(gem);
+    }
+  }
+
+  return { gems: remaining, xpGained };
+}
+
 
 /**
  * Advance the simulation one step and return the next GameState.
@@ -212,10 +262,12 @@ export function resolveEnemyPlayerCollisions(player, enemies) {
  * mutating its inputs. It contains no drawing and no direct clock access.
  *
  * The very first thing it does is check `phase`: when the game is not in the
- * PLAYING phase (i.e. GAME_OVER), it returns the state unchanged. This single
- * early-return enforces every "while not Playing, do nothing" requirement in
- * one place — no movement, no spawning, no firing, no health/score change, and
- * input is ignored (Req 1.8, 3.5, 4.5, 4.7, 5.5).
+ * PLAYING phase (either GAME_OVER or LEVEL_UP), it returns the state unchanged.
+ * This single early-return enforces every "while not Playing, do nothing"
+ * requirement in one place — no movement, no spawning, no firing, no
+ * health/score change, gems and pending upgrades untouched, and input is ignored
+ * (Req 1.5, 1.8, 3.5, 4.2–4.6, 4.8, 5.5). The phase can be one of
+ * 'PLAYING' | 'GAME_OVER' | 'LEVEL_UP'.
  *
  * When PLAYING, the pipeline runs in the order fixed by the design (State
  * Management + Collision Detection resolution order), so collisions are based on
@@ -223,12 +275,19 @@ export function resolveEnemyPlayerCollisions(player, enemies) {
  *   1. Compute velocity from input and move & clamp the player (Req 1.x).
  *   2. Move every living enemy toward the player (Req 3.3).
  *   3. Spawn new enemies on the spawn timer (Req 3.1, 3.2).
- *   4. Advance the fire timer and emit projectiles at the nearest enemy
- *      (Req 2.1–2.4).
+ *   4. Advance the fire timer (per-player interval) and emit projectiles at the
+ *      nearest enemy (Req 2.1–2.4, 6.2).
  *   5. Move projectiles and cull any that leave the field (Req 2.6).
- *   6. Resolve projectile↔enemy hits (Req 2.5).
+ *   6. Resolve projectile↔enemy hits, learning which enemies died (Req 2.5), and
+ *      drop one XP gem at each projectile-killed enemy's position (Req 1.1, 1.2).
  *   7. Resolve enemy↔player hits, apply damage, and check game over
  *      (Req 3.4, 4.2, 4.3, 4.4).
+ *   7b. Collect gems the player is touching and add their XP to the player
+ *      (Req 2.1–2.5), then run leveling on the new XP total (Req 3.4–3.6, 3.8).
+ *   7c. Choose the resulting phase — GAME_OVER takes priority over LEVEL_UP; a
+ *      level-up enters LEVEL_UP and offers 3 upgrades, otherwise PLAYING
+ *      (Req 4.1, 5.1). Because LEVEL_UP is set at the end of the step, the next
+ *      frame hits the early-return and freezes until an upgrade is chosen.
  *   8. Update the survival-time score (Req 5.1–5.3).
  *
  * @param {object} state The current GameState.
@@ -238,8 +297,9 @@ export function resolveEnemyPlayerCollisions(player, enemies) {
  * @returns {object} The next GameState (new object; inputs are not mutated).
  */
 export function update(state, dt, input) {
-  // GAME_OVER (or any non-PLAYING phase): freeze the entire simulation and
-  // return the state unchanged (Req 1.8, 3.5, 4.5, 4.7, 5.5).
+  // GAME_OVER or LEVEL_UP (any non-PLAYING phase): freeze the entire simulation
+  // and return the state unchanged. This also freezes LEVEL_UP with no extra
+  // pause code (Req 1.5, 1.8, 3.5, 4.2–4.6, 4.8, 5.5).
   if (state.phase !== 'PLAYING') {
     return state;
   }
@@ -282,11 +342,19 @@ export function update(state, dt, input) {
   const movedProjectiles = updateProjectiles(firedProjectiles, field, dt);
 
   // 6. Resolve projectile↔enemy collisions: both are removed on a hit,
-  //    at most one enemy per projectile (Req 2.5).
+  //    at most one enemy per projectile (Req 2.5). Also learn which enemies died
+  //    so we can drop gems at their positions.
   const {
     projectiles: survivingProjectiles,
     enemies: enemiesAfterProjectileHits,
+    killed,
   } = resolveProjectileEnemyCollisions(movedProjectiles, spawnedEnemies);
+
+  // 6b. Drop one gem per projectile-killed enemy, at its death position, and
+  //     add them to the gems already on the field (Req 1.1, 1.2). Contact kills
+  //     are handled in step 7 and drop no gems (Req 1.4).
+  const droppedGems = killed.map((e) => createGem(e.x, e.y));
+  const gemsOnField = [...state.gems, ...droppedGems];
 
   // 7. Resolve enemy↔player collisions: apply damage (clamped at 0), remove the
   //    colliding enemies, and detect game over (Req 3.4, 4.2, 4.3, 4.4).
@@ -296,15 +364,37 @@ export function update(state, dt, input) {
     phase,
   } = resolveEnemyPlayerCollisions(player, enemiesAfterProjectileHits);
 
+  // 7b. Collect gems the player is touching and add the XP to the player
+  //     (Req 2.1–2.5), then run leveling on the new XP total (Req 3.4–3.6, 3.8).
+  const { gems: remainingGems, xpGained } = resolveGemCollection(
+    playerAfterDamage,
+    gemsOnField
+  );
+  const playerWithXp = {
+    ...playerAfterDamage,
+    xp: playerAfterDamage.xp + xpGained,
+  };
+  const { level, xp, leveledUp } = applyLeveling(playerWithXp);
+  const leveledPlayer = { ...playerWithXp, level, xp };
+
+  // 7c. Choose the resulting phase. Game-over takes priority over level-up: if
+  //     the player died this step we stay GAME_OVER; otherwise a level-up enters
+  //     LEVEL_UP and offers 3 upgrades, else we remain PLAYING (Req 4.1, 5.1).
+  const finalPhase =
+    phase === 'GAME_OVER' ? 'GAME_OVER' : leveledUp ? 'LEVEL_UP' : 'PLAYING';
+  const pendingUpgrades = finalPhase === 'LEVEL_UP' ? offerUpgrades() : [];
+
   // 8. Update the survival-time score (Req 5.1–5.3).
   const { survivalTime, score } = updateScore(state, dt);
 
   return {
-    phase,
+    phase: finalPhase,
     field,
-    player: playerAfterDamage,
+    player: leveledPlayer,
     enemies: survivingEnemies,
     projectiles: survivingProjectiles,
+    gems: remainingGems,
+    pendingUpgrades,
     fireTimer,
     spawnTimer,
     survivalTime,

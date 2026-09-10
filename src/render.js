@@ -6,10 +6,13 @@
 // game-over overlay. A logic bug lives in update.js; a bug here only makes the
 // game *look* wrong while still playing correctly.
 
+import { levelThreshold } from './leveling.js';
+
 // Entity fill colors. Kept in one place so the palette is easy to adjust.
 const PLAYER_COLOR = '#4da3ff'; // blue
 const ENEMY_COLOR = '#ff5b5b'; // red
 const PROJECTILE_COLOR = '#ffe066'; // yellow
+const GEM_COLOR = '#7CFC00'; // bright green
 
 /**
  * Draw a filled circle centered at (x, y) with the given radius and color.
@@ -42,12 +45,17 @@ export function drawCircle(ctx, x, y, radius, color) {
  * @returns {void}
  */
 export function render(ctx, state) {
-  const { field, player, enemies, projectiles, score, phase } = state;
+  const { field, player, enemies, projectiles, gems, score, phase, pendingUpgrades } = state;
 
   // 1. Clear the whole field before redrawing this frame.
   ctx.clearRect(0, 0, field.width, field.height);
 
-  // 2. Draw entities as circles from their current positions.
+  // 2. Draw entities as circles from their current positions. Gems are drawn
+  //    first (under the player) so the player always stays visible on top
+  //    (Req 7.1). Older states may lack a gems list, so guard with `|| []`.
+  for (const gem of gems || []) {
+    drawCircle(ctx, gem.x, gem.y, gem.radius, GEM_COLOR);
+  }
   drawCircle(ctx, player.x, player.y, player.radius, PLAYER_COLOR);
   for (const enemy of enemies) {
     drawCircle(ctx, enemy.x, enemy.y, enemy.radius, ENEMY_COLOR);
@@ -56,11 +64,15 @@ export function render(ctx, state) {
     drawCircle(ctx, projectile.x, projectile.y, projectile.radius, PROJECTILE_COLOR);
   }
 
-  // 3. Update the HUD (plain DOM elements) with the current score and health.
-  updateHud(score, player.health);
+  // 3. Update the HUD (plain DOM elements) with the current score, level/XP
+  //    (Req 7.2), and health.
+  updateHud(score, player.health, player.level, player.xp);
 
   // 4. Show or hide the game-over overlay with the final score (Req 4.6, 5.6).
   updateGameOverOverlay(phase, score);
+
+  // 5. Show or hide the level-up overlay with the offered upgrades (Req 7.3–7.5).
+  updateLevelUpOverlay(phase, pendingUpgrades);
 }
 
 /**
@@ -70,11 +82,16 @@ export function render(ctx, state) {
  *
  * @param {number} score  Current score (whole seconds survived).
  * @param {number} health Current player health.
+ * @param {number} level  Current player level (Req 7.2).
+ * @param {number} xp     Current XP toward the next level (Req 7.2).
  * @returns {void}
  */
-function updateHud(score, health) {
+function updateHud(score, health, level, xp) {
   const scoreEl = getElement('hud-score');
   if (scoreEl) scoreEl.textContent = `Score: ${score}`;
+
+  const levelEl = getElement('hud-level');
+  if (levelEl) levelEl.textContent = `Lv ${level} — XP ${xp}/${levelThreshold(level)}`;
 
   const healthEl = getElement('hud-health');
   if (healthEl) healthEl.textContent = `HP: ${health}`;
@@ -102,6 +119,33 @@ function updateGameOverOverlay(phase, score) {
 }
 
 /**
+ * Toggle the level-up overlay. In LEVEL_UP, populate the three upgrade buttons
+ * with the offered upgrade labels and reveal the overlay (Req 7.3–7.5);
+ * otherwise keep it hidden. This is a pure projection: it only reads state and
+ * sets DOM text/visibility — it never mutates state or applies an upgrade
+ * (that click logic lives in main.js).
+ *
+ * @param {string} phase The current phase ('PLAYING' | 'GAME_OVER' | 'LEVEL_UP').
+ * @param {Array<{label:string}>} pendingUpgrades The offered upgrades to display.
+ * @returns {void}
+ */
+function updateLevelUpOverlay(phase, pendingUpgrades) {
+  const overlay = getElement('level-up-overlay');
+  if (!overlay) return;
+
+  if (phase === 'LEVEL_UP') {
+    const upgrades = pendingUpgrades || [];
+    for (let i = 0; i < 3; i += 1) {
+      const button = getUpgradeButton(i);
+      if (button) button.textContent = upgrades[i]?.label ?? '';
+    }
+    overlay.classList.remove('hidden');
+  } else {
+    overlay.classList.add('hidden');
+  }
+}
+
+/**
  * Look up a DOM element by id, guarding against environments where `document`
  * is unavailable so this rendering module never throws outside the browser.
  *
@@ -111,4 +155,16 @@ function updateGameOverOverlay(phase, score) {
 function getElement(id) {
   if (typeof document === 'undefined') return null;
   return document.getElementById(id);
+}
+
+/**
+ * Look up an upgrade button by its `data-slot` index, guarding against a
+ * missing `document` so this module never throws outside the browser.
+ *
+ * @param {number} slot The button's data-slot index (0, 1, or 2).
+ * @returns {HTMLElement|null} The matching button, or null if unavailable.
+ */
+function getUpgradeButton(slot) {
+  if (typeof document === 'undefined') return null;
+  return document.querySelector(`.upgrade-button[data-slot="${slot}"]`);
 }

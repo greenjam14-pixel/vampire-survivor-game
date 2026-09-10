@@ -54,9 +54,15 @@ export function enemyHitsPlayer(enemy, player) {
  *
  * This is pure — it returns new arrays and does not mutate the inputs.
  *
+ * In addition to the surviving projectiles and enemies, this also reports the
+ * `killed` enemies — the ones removed by a projectile this step — so callers
+ * can react to projectile kills (e.g. drop an XP gem at the death position,
+ * Req 1.1). Only projectile kills appear in `killed`; contact kills are handled
+ * separately and are not reported here (Req 1.4).
+ *
  * @param {Array<{x:number, y:number, radius:number}>} projectiles Current projectiles.
  * @param {Array<{x:number, y:number, radius:number, alive:boolean}>} enemies Current enemies.
- * @returns {{projectiles:Array, enemies:Array}} Surviving projectiles and enemies.
+ * @returns {{projectiles:Array, enemies:Array, killed:Array}} Surviving projectiles, surviving enemies, and the enemies killed by projectiles this step.
  */
 export function resolveProjectileEnemyCollisions(projectiles, enemies) {
   // Track which enemies have been consumed so one enemy can't be hit twice and
@@ -85,7 +91,15 @@ export function resolveProjectileEnemyCollisions(projectiles, enemies) {
     }
   }
 
-  const survivingEnemies = enemies.filter((_, i) => !consumedEnemy[i]);
+  // Partition enemies into survivors and the ones killed by a projectile this
+  // step, in a single pass (Req 1.1). `killed` carries the death positions so a
+  // caller can drop a gem where each enemy died.
+  const survivingEnemies = [];
+  const killed = [];
+  for (let i = 0; i < enemies.length; i++) {
+    if (consumedEnemy[i]) killed.push(enemies[i]);
+    else survivingEnemies.push(enemies[i]);
+  }
 
-  return { projectiles: survivingProjectiles, enemies: survivingEnemies };
+  return { projectiles: survivingProjectiles, enemies: survivingEnemies, killed };
 }

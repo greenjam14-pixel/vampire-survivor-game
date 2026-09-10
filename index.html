@@ -14,6 +14,7 @@
       <!-- Heads-up display: current score and player health, drawn over the canvas. -->
       <div id="hud">
         <span id="hud-score">Score: 0</span>
+        <span id="hud-level">Lv 1 — XP 0/5</span>
         <span id="hud-health">HP: 100</span>
       </div>
 
@@ -24,6 +25,20 @@
           <h1 id="game-over-title">Game Over</h1>
           <p id="game-over-score">Final Score: 0</p>
           <p id="game-over-restart">Press any key to restart</p>
+        </div>
+      </div>
+
+      <!-- Level-up overlay. Hidden during play; shown when the player levels up.
+           The three upgrade buttons' labels are populated by render.js, and their
+           clicks are wired in main.js. -->
+      <div id="level-up-overlay" class="hidden">
+        <div id="level-up-panel">
+          <h1 id="level-up-title">Level Up!</h1>
+          <div id="upgrade-buttons">
+            <button class="upgrade-button" data-slot="0"></button>
+            <button class="upgrade-button" data-slot="1"></button>
+            <button class="upgrade-button" data-slot="2"></button>
+          </div>
         </div>
       </div>
     </div>

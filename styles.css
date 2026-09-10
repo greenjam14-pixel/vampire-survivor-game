@@ -59,6 +59,10 @@ body {
   color: #ffe066;
 }
 
+#hud-level {
+  color: #8ad4ff;
+}
+
 #hud-health {
   color: #ff7b7b;
 }
@@ -101,4 +105,66 @@ body {
   margin: 0;
   font-size: 16px;
   color: #9aa2b5;
+}
+
+/* Level-up overlay covers the whole field with a dim backdrop, mirroring the
+   game-over overlay. Unlike the HUD, this overlay keeps default pointer events
+   so its upgrade buttons remain clickable. */
+#level-up-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 18, 0.78);
+}
+
+#level-up-overlay.hidden {
+  display: none;
+}
+
+#level-up-panel {
+  text-align: center;
+  padding: 32px 48px;
+  background: rgba(30, 34, 48, 0.9);
+  border: 1px solid #3a4159;
+  border-radius: 12px;
+}
+
+#level-up-title {
+  margin: 0 0 20px;
+  font-size: 40px;
+  color: #8ad4ff;
+}
+
+/* The three upgrade choices, stacked vertically. */
+#upgrade-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.upgrade-button {
+  display: block;
+  min-width: 260px;
+  padding: 14px 20px;
+  font-size: 18px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #f2f4f8;
+  background: #2c3145;
+  border: 1px solid #3a4159;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.upgrade-button:hover {
+  background: #3a4159;
+  border-color: #55608a;
+}
+
+.upgrade-button:active {
+  background: #444d6b;
 }

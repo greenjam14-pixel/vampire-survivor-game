@@ -11,6 +11,7 @@ import { createInitialState } from './entities.js';
 import { update } from './update.js';
 import { render } from './render.js';
 import { getInputSnapshot } from './input.js';
+import { applyUpgrade } from './upgrades.js';
 
 // Clamp a single simulation step to at most 50 ms. If the tab is hidden or a
 // debugger pauses execution, the next timestamp gap could be several seconds,
@@ -76,6 +77,45 @@ function main() {
     requestAnimationFrame(frame);
   }
 
+  /**
+   * Wire the level-up upgrade buttons — the one mouse-click input in the game.
+   * Called once at boot (not per frame). Each `.upgrade-button` gets a click
+   * listener that only acts while in LEVEL_UP: it reads the button's `data-slot`,
+   * looks up the matching pending upgrade, applies it to the player, and resumes
+   * PLAYING with the pending list cleared (Req 5.3, 5.4, 4.7, 5.5, 9.5).
+   *
+   * This mirrors the restart keydown boundary: the click logic lives here in the
+   * I/O layer, never inside the frozen pure update().
+   *
+   * @returns {void}
+   */
+  function wireUpgradeButtons() {
+    if (typeof document === 'undefined') return;
+    const buttons = document.querySelectorAll('.upgrade-button');
+    buttons.forEach((button) => {
+      button.addEventListener('click', () => {
+        // A click only means something while the level-up menu is showing; a
+        // stray click in PLAYING or GAME_OVER is ignored (Req 5.5).
+        if (gameState.phase !== 'LEVEL_UP') return;
+
+        const slot = Number(button.dataset.slot);
+        const chosen = gameState.pendingUpgrades[slot];
+        if (!chosen) return;
+
+        // Apply the chosen upgrade purely, clear the offered list, and resume.
+        gameState = {
+          ...gameState,
+          player: applyUpgrade(gameState.player, chosen.id),
+          phase: 'PLAYING',
+          pendingUpgrades: [],
+        };
+        // Reset the clock reference so the first resumed frame's dt is 0 rather
+        // than a large gap accumulated while the menu was open.
+        lastTime = null;
+      });
+    });
+  }
+
   // Restart from the game-over screen: pressing any key while in GAME_OVER
   // replaces the state with a fresh initial state, returning to PLAYING
   // (Req 4.7 — inputs are ignored until the game is restarted). During PLAYING
@@ -90,6 +130,9 @@ function main() {
       }
     });
   }
+
+  // Attach the upgrade-button click handlers once, at boot.
+  wireUpgradeButtons();
 
   // Kick off the loop.
   requestAnimationFrame(frame);

@@ -12,7 +12,7 @@ const PROJECTILE_SPEED = 400;
  *
  * @param {number} fieldWidth  Width of the game field in pixels.
  * @param {number} fieldHeight Height of the game field in pixels.
- * @returns {{x:number, y:number, radius:number, speed:number, health:number}}
+ * @returns {{x:number, y:number, radius:number, speed:number, health:number, level:number, xp:number, fireInterval:number}}
  */
 export function createPlayer(fieldWidth, fieldHeight) {
   return {
@@ -21,6 +21,9 @@ export function createPlayer(fieldWidth, fieldHeight) {
     radius: 12, // used for boundary clamping and collision
     speed: 200, // pixels per second (Req 1)
     health: 100, // Req 4.1
+    level: 1, // starting level (Req 3.1)
+    xp: 0, // current XP toward next level (Req 3.1)
+    fireInterval: 0.5, // seconds between shots; was FIRE_INTERVAL const, now per-player and upgradeable (Req 6.1)
   };
 }
 
@@ -62,6 +65,23 @@ export function createProjectile(x, y, dirX, dirY) {
 }
 
 /**
+ * Create an XP gem entity — a small pickup dropped where a projectile kills an enemy.
+ * The player collects it by walking over it to gain XP.
+ *
+ * @param {number} x Center x in pixels (the killed enemy's position).
+ * @param {number} y Center y in pixels (the killed enemy's position).
+ * @returns {{x:number, y:number, radius:number, xpValue:number}}
+ */
+export function createGem(x, y) {
+  return {
+    x,
+    y,
+    radius: 5, // Req 1.2
+    xpValue: 1, // XP granted on collection (Req 1.2)
+  };
+}
+
+/**
  * Create the initial game state — the single source of truth for the simulation.
  *
  * @param {number} fieldWidth  Width of the game field in pixels.
@@ -70,11 +90,13 @@ export function createProjectile(x, y, dirX, dirY) {
  */
 export function createInitialState(fieldWidth, fieldHeight) {
   return {
-    phase: 'PLAYING', // 'PLAYING' | 'GAME_OVER'
+    phase: 'PLAYING', // 'PLAYING' | 'GAME_OVER' | 'LEVEL_UP'
     field: { width: fieldWidth, height: fieldHeight },
     player: createPlayer(fieldWidth, fieldHeight),
     enemies: [],
     projectiles: [],
+    gems: [], // uncollected XP gems on the field (Req 1.3, 9.3)
+    pendingUpgrades: [], // the 3 offered upgrades; empty unless LEVEL_UP (Req 5.1)
     // timers accumulate elapsed seconds and "fire" when they cross a threshold
     fireTimer: 0, // for automatic attack (Req 2.1)
     spawnTimer: 0, // for enemy spawning (Req 3.1)
